@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+#Load global settings
+if [[ -f "$HOME/.profile" ]]; then
+    . "$HOME/.profile"
+fi

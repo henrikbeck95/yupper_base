@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+#Load local settings
+if [[ -f "$HOME/.bashrc" ]]; then
+    . "$HOME/.bashrc"
+fi

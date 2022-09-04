@@ -1,0 +1,6 @@
+#!/usr/bin/env zsh
+
+#Load global settings
+if [[ -f "$HOME/.profile" ]]; then
+    . "$HOME/.profile"
+fi
