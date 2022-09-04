@@ -1,0 +1,1296 @@
+#!/usr/bin/env bash
+
+##############################
+#Issues
+##############################
+#
+#- Text editor CRLF/LR problem
+#In case of M^ issue, you must try: sed -i -e 's/\r$//' this_script_file_path
+#If this did not worked to you try: sed -i -e 's/^M$//' this_script_file_path
+#
+##############################
+
+##############################
+#Task list
+##############################
+#
+#1. [ ] Migrate the library functions to Shell Script Library project.
+#1. [ ] Import the library functions to Shell Script Library.
+#1. [ ] Connect to the internet inside installation_setup_part_02_normal.
+#1. [ ] 
+#   - [ ] 
+#
+##############################
+
+##############################
+#Declaring the variables
+##############################
+
+#Auxiliar values
+#export GLOBAL_VALUE_AUX_ALL="$*"
+export GLOBAL_VALUE_AUX_00="$0"
+export GLOBAL_VALUE_AUX_01="$1"
+#export GLOBAL_VALUE_AUX_02="$2"
+#export GLOBAL_VALUE_AUX_03="$3"
+
+#Import this file using a relative path
+PATH_SCRIPT="$(dirname "$(readlink -f "$0")")"
+
+#shellcheck source=/dev/null
+. "$PATH_SCRIPT"/yup-setup-env.ini || . /etc/yup-setup-env.ini || exit 1
+
+##############################
+#Library
+##############################
+
+alias 'diff'='diff --color=auto'
+alias 'grep'='grep --color=auto'
+alias 'ip'='ip -color=auto'
+alias 'ls'='ls --color=auto'
+alias 'dmesg'='dmesg --color=always'
+
+function_aux(){
+    #echo "Before calling the function_normal()..."
+    "$@"
+    #echo "After calling the function_normal()..."
+}
+
+system_disk_partition_format(){
+    #system_disk_partition_format "$GLOBAL_VALUE_PARTITION_DEVICE" "$GLOBAL_VALUE_PARTITION_BOOT_NUMBER" "$GLOBAL_VALUE_PARTITION_BOOT_FORMAT" "$GLOBAL_VALUE_PARTITION_BOOT_LABEL"
+
+    local PARTITION_DEVICE="$1" #/dev/sda
+    local PARTITION_NUMBER="$2" #1
+    local PARTITION_FORMAT="$3" #fat
+    local PARTITION_LABEL="$4" #boot
+
+    case "$PARTITION_FORMAT" in
+        "BTRFS" | "btrfs") mkfs.btrfs -f -L "$PARTITION_LABEL" "${PARTITION_DEVICE}${PARTITION_NUMBER}" ;;
+        "EXT4" | "ext4") mkfs.ext4 -L "$PARTITION_LABEL" "${PARTITION_DEVICE}${PARTITION_NUMBER}" ;;
+        "FAT32" | "fat32") mkfs.fat -F32 -I -n "$PARTITION_LABEL" "${PARTITION_DEVICE}${PARTITION_NUMBER}" ;;
+        "NTFS" | "ntfs") mkfs.ntfs -f -L "$PARTITION_LABEL" "${PARTITION_DEVICE}${PARTITION_NUMBER}" ;;
+        "SWAP" | "swap") mkswap -f -L "$PARTITION_LABEL" "${PARTITION_DEVICE}${PARTITION_NUMBER}" ;;
+        "XFS" | "xfs") mkfs.xfs -f -L "$PARTITION_LABEL" "${PARTITION_DEVICE}${PARTITION_NUMBER}" ;;
+        *) echo "Error!" ;;
+    esac
+}
+
+#system_pkg_install_backup_???(){}
+#system_pkg_install_backup_snapper(){}
+#system_pkg_install_backup_timeshift(){}
+
+#MUST_BE_IMPROVED
+system_disk_partition_create(){
+    #system_disk_partition_create "$GLOBAL_VALUE_PARTITION_DEVICE" "$GLOBAL_VALUE_PARTITION_BOOT_NUMBER" "$GLOBAL_VALUE_PARTITION_BOOT_LABEL" "$GLOBAL_VALUE_PARTITION_BOOT_SIZE" "$PARTITION_TABLE"
+
+    local PARTITION_DEVICE="$1" #/dev/sda
+    local PARTITION_NUMBER="$2" #1
+    local PARTITION_LABEL="$3"
+    local PARTITION_SIZE="$4" #Megabyte
+    local PARTITION_TABLE="$5" #GPT || MBR
+
+    case "$PARTITION_TABLE" in
+		"GPT" | "gpt") 
+			#Create BOOT partition
+			(echo n; echo "$PARTITION_NUMBER"; echo -ne '\n'; echo "+${PARTITION_SIZE}M"; echo -ne '\n'; echo w; echo y) | gdisk "$PARTITION_DEVICE"
+
+			#Set bootable flag only for BOOT partition
+            if [[ "$PARTITION_LABEL" == "$GLOBAL_VALUE_PARTITION_BOOT_LABEL" ]]; then
+                (echo a; echo "$PARTITION_NUMBER"; echo w; echo y) | gdisk "$PARTITION_DEVICE"
+
+                #Set bootable flag on partition number 2 - EFI System
+                (echo set "$PARTITION_NUMBER" boot on) | parted "$PARTITION_DEVICE"
+            fi
+            ;;
+		"MBR" | "mbr") 
+			#Create BOOT partition
+			(echo n; echo p; echo "$PARTITION_NUMBER"; echo 2048; echo "+${PARTITION_SIZE}M"; echo w) | fdisk "$PARTITION_DEVICE"
+
+            #Set bootable flag only for BOOT partition
+            if [[ "$PARTITION_LABEL" == "$GLOBAL_VALUE_PARTITION_BOOT_LABEL" ]]; then
+			    (echo a; echo "$PARTITION_NUMBER"; echo w) | fdisk "$PARTITION_DEVICE"
+
+                #Set bootable flag on partition number 2 - EFI System
+                (echo set "$PARTITION_NUMBER" boot on) | parted "$PARTITION_DEVICE"
+            fi
+
+			#Create ROOT partition
+			(echo n; echo p; echo "$PARTITION_NUMBER"; echo 1050624; echo "+${PARTITION_SIZE}M"; echo w) | fdisk "$PARTITION_DEVICE"
+			;;
+		*) echo "Not implemented yet!" ;;
+	esac
+}
+
+system_disk_partition_delete_all(){
+    #system_disk_partition_delete_all "$GLOBAL_VALUE_PARTITION_DEVICE"
+
+    local PARTITION_DEVICE="$1" #/dev/sda
+    #local PARTITION_NUMBER=0
+
+    #wipefs -a "$PARTITION_DEVICE"
+    sfdisk --delete /dev/sdb
+
+    #for (( i=0; "$i" < 128; i++ )); do
+        #Remove partition number $i
+        #system_disk_partition_delete_single "$PARTITION_DEVICE" "$i"
+    #done
+}
+
+system_disk_partition_delete_single(){
+    #system_disk_partition_delete_single "$GLOBAL_VALUE_PARTITION_DEVICE" "$GLOBAL_VALUE_PARTITION_BOOT_NUMBER"
+
+    local PARTITION_DEVICE="$1" #/dev/sda
+    local PARTITION_NUMBER="$2" #1
+
+    #Remove partition number 2
+    (echo rm "$PARTITION_NUMBER") | parted "$PARTITION_DEVICE"
+}
+
+system_disk_partition_list(){
+    #List all disk partitions and mount points
+    #lsblk
+
+    #List all disk partitions with formats, labels and their sizes
+    lsblk -f -m
+
+    #List all disk partitions without label
+    parted -l
+
+    #???
+    #cat /proc/partitions
+}
+
+system_disk_partition_management(){
+    #system_disk_partition_management "$GLOBAL_VALUE_PARTITION_DEVICE"
+
+    local PARTITION_DEVICE="$1" #/dev/sda
+
+    cfdisk "$PARTITION_DEVICE"
+    #gdisk "$PARTITION_DEVICE"
+}
+
+#MUST_BE_TESTED
+#MUST_BE_IMPROVED
+system_disk_partition_mount(){
+    #system_disk_partition_mount "$GLOBAL_VALUE_PARTITION_DEVICE" "$GLOBAL_VALUE_PARTITION_BOOT_NUMBER" "$GLOBAL_VALUE_PARTITION_ROOT_NUMBER" "$GLOBAL_VALUE_PARTITION_BOOT_FORMAT"
+
+    local PARTITION_DEVICE="$1" #/dev/sda
+    local PARTITION_NUMBER_BOOT="$2" #1
+    local PARTITION_NUMBER_ROOT="$3" #2
+    local PARTITION_FORMAT="$4" #BTRFS || EXT4 || FAT32 || XFS || ZFS
+
+    local DISK_FORMAT="hdd"
+    #local DISK_FORMAT="ssd"
+
+    #Mount the ROOT partition
+    mount "${PARTITION_DEVICE}${PARTITION_NUMBER_ROOT}" /mnt/
+
+    case "$PARTITION_FORMAT" in
+        "BTRFS" | "btrfs") 
+            #Create BTRFS subvolumes
+            cd /mnt/ || exit
+            btrfs subvolume create @
+            btrfs subvolume create @home
+            cd - || exit
+
+            #Unmount ROOT partition
+            umount /mnt/
+
+            #Mount BTRFS ROOT subvolume
+            if [[ "$DISK_FORMAT" == "ssd" ]]; then
+                mount -o noatime,space_cache=v2,compress=zstd,ssd,discard=async,subvol=@ "${PARTITION_DEVICE}${PARTITION_NUMBER_ROOT}" /mnt/
+            else
+                mount -o noatime,space_cache=v2,compress=zstd,subvol=@ "${PARTITION_DEVICE}${PARTITION_NUMBER_ROOT}" /mnt/
+            fi
+
+            #Create the BOOT partition
+            mkdir -p /mnt/boot
+            
+            #Create the HOME partition
+            mkdir -p /mnt/home
+
+            #Mount BTRFS HOME subvolume
+            if [[ "$DISK_FORMAT" == "ssd" ]]; then
+                mount -o noatime,space_cache=v2,compress=zstd,ssd,discard=async,subvol=@home "${PARTITION_DEVICE}${PARTITION_NUMBER_ROOT}" /mnt/home/
+            else
+                mount -o noatime,space_cache=v2,compress=zstd,subvol=@home "${PARTITION_DEVICE}${PARTITION_NUMBER_ROOT}" /mnt/home/
+            fi
+            ;;
+        #"ZFS" | "zfs") : ;;
+        *) 
+            #Create the BOOT partition
+            mkdir -p /mnt/boot/
+            ;;
+    esac
+    
+    #Mount the BOOT partition
+    mount "${PARTITION_DEVICE}${PARTITION_NUMBER_BOOT}" /mnt/boot/
+
+    system_disk_partition_list
+}
+
+system_disk_partition_umount_all(){
+    #Unmount all mount points
+    umount -a
+}
+
+system_disk_partition_umount_path(){
+    #system_disk_partition_umount_path "/mnt/"
+    
+    local PATH_DIRECTORY="$1"
+
+    umount -R "$PATH_DIRECTORY"
+}
+
+#system_disk_table_convert_from_gpt_to_mbr(){}
+
+system_disk_table_convert_from_mbr_to_gpt(){
+    #system_disk_table_convert_from_mbr_to_gpt "$GLOBAL_VALUE_PARTITION_DEVICE"
+
+    local PARTITION_DEVICE="$1" #/dev/sda
+	
+    #(echo r; echo g; echo w; echo w; echo y) | gdisk "$PARTITION_DEVICE"
+	(echo m; echo w; echo y) | gdisk "$PARTITION_DEVICE"
+}
+
+system_disk_table_create_gpt(){
+    #system_disk_table_create_gpt ""
+
+    local PARTITION_DEVICE="$1" #/dev/sda
+
+	(echo g; echo w) | fdisk "$PARTITION_DEVICE"
+}
+
+system_disk_table_create_mbr(){
+    #system_disk_table_create_mbr ""
+
+    local PARTITION_DEVICE="$1" #/dev/sda
+
+	(echo o; echo w) | fdisk "$PARTITION_DEVICE"
+}
+
+system_disk_table_list(){
+    #system_disk_table_list "/dev/sda"
+    
+    local PARTITION_DEVICE="$1" #/dev/sda
+
+	fdisk -l "$PARTITION_DEVICE"
+}
+
+system_driver_internet_wifi_iwctl_block_remove(){
+    #Unblock all the Wi-Fi drivers (in case of needing)
+    rfkill list
+    rfkill unblock wifi
+}
+
+system_driver_internet_wifi_iwctl_device_list(){
+    iwctl device list
+}
+
+system_driver_internet_wifi_iwctl_device_powered_off(){
+    local INTERNET_WIFI_DRIVER="$1"
+
+    iwctl device "$INTERNET_WIFI_DRIVER" set-property Powered off
+}
+
+system_driver_internet_wifi_iwctl_device_powered_on(){
+    local INTERNET_WIFI_DRIVER="$1"
+
+    iwctl device "$INTERNET_WIFI_DRIVER" set-property Powered on
+}
+
+system_driver_internet_wifi_iwctl_network_connect(){
+    #system_driver_internet_wifi_iwctl_network_connect "$GLOBAL_VALUE_INTERNET_WIFI_DRIVER" "$GLOBAL_VALUE_INTERNET_WIFI_NAME" "$GLOBAL_VALUE_INTERNET_WIFI_PASSWORD"
+
+    local INTERNET_WIFI_DRIVER="$1"
+    local INTERNET_WIFI_NAME="$2"
+    local INTERNET_WIFI_PASSWORD="$3"
+
+    system_driver_internet_wifi_iwctl_block_remove
+    #system_driver_internet_wifi_iwctl_device_list
+    #system_driver_internet_wifi_iwctl_station_list
+    system_driver_internet_wifi_iwctl_device_powered_on "$INTERNET_WIFI_DRIVER"
+    system_driver_internet_wifi_iwctl_network_scan "$INTERNET_WIFI_DRIVER"
+    system_driver_internet_wifi_iwctl_network_list_available "$INTERNET_WIFI_DRIVER"
+
+    #List all arguments available for debugging the function
+    #echo -e "Wi-Fi password:\t$INTERNET_WIFI_PASSWORD"
+    #echo -e "Wi-Fi Driver:\t$INTERNET_WIFI_DRIVER"
+    #echo -e "Wi-FI SSID:\t$INTERNET_WIFI_NAME"
+
+    #Connect to the Wi-Fi network
+    if [[ -z "$INTERNET_WIFI_PASSWORD" ]]; then
+        iwctl station \
+            "$INTERNET_WIFI_DRIVER" \
+            connect \
+            "$INTERNET_WIFI_NAME"
+    else
+        iwctl \
+            --passphrase "$INTERNET_WIFI_PASSWORD" \
+            station "$INTERNET_WIFI_DRIVER" \
+            connect "$INTERNET_WIFI_NAME"
+    fi
+
+    system_driver_internet_wifi_iwctl_network_list_known
+}
+
+system_driver_internet_wifi_iwctl_network_list_available(){
+    local INTERNET_WIFI_DRIVER="$1"
+
+    iwctl station "$INTERNET_WIFI_DRIVER" get-networks
+}
+
+system_driver_internet_wifi_iwctl_network_list_known(){
+    iwctl known-networks list
+}
+
+#system_driver_internet_wifi_iwctl_network_list_unknown
+
+system_driver_internet_wifi_iwctl_network_remove_know(){
+    #system_driver_internet_wifi_iwctl_network_remove_know "$GLOBAL_VALUE_INTERNET_WIFI_NAME"
+
+    local INTERNET_WIFI_NAME="$1"
+
+    iwctl known-networks "$INTERNET_WIFI_NAME" forget
+}
+
+system_driver_internet_wifi_iwctl_network_scan(){
+    local INTERNET_WIFI_DRIVER="$1"
+
+    iwctl station "$INTERNET_WIFI_DRIVER" scan
+}
+
+system_driver_internet_wifi_iwctl_station_list(){
+    iwctl station list
+}
+
+system_pkg_update_database_repository(){
+    pacman -Syy
+}
+
+system_pkg_update_database_mirrorlist(){
+    #system_pkg_update_database_mirrorlist "$GLOBAL_VALUE_PLACE_COUNTRY_NAME"
+
+    local PLACE_COUNTRY_NAME="$1"
+    local PACKAGE_MANAGER_MIRRORLIST_FILE_LOCK="/etc/pacman.d/mirrorlist.lck"
+
+    if [[ -f "$PACKAGE_MANAGER_MIRRORLIST_FILE_LOCK" ]]; then
+        return 1
+    else
+        case $(utils_check_if_internet_connection_exists) in
+            "false") return 2 ;;
+            "true")
+                {
+                    #Backup the Pacman mirrorlist file
+                    mv /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist_bak
+
+                    #Download Pacman mirrorlist file
+                    curl 'https://archlinux.org/mirrorlist/?country=all&protocol=http&protocol=https&ip_version=4&ip_version=6' > /etc/pacman.d/mirrorlist_aux
+
+                    #Remove the first character of each line in a file 
+                    sed "s/^.//g" /etc/pacman.d/mirrorlist_aux > /etc/pacman.d/mirrorlist
+
+                    system_pkg_update_database_repository
+
+                    #Update Pacman GPG keys
+                    pacman -S --noconfirm archlinux-keyring
+                    #pacman-key --refresh-keys
+
+                    #???
+                    pacman -S --noconfirm reflector
+
+                    #???
+                    systemctl enable --now reflector.timer
+
+                    #Ranking the repositories according to speed up
+                    #reflector --verbose --latest 10 --sort rate --save /etc/pacman.d/mirrorlist
+                    reflector -c "$PLACE_COUNTRY_NAME" -a 12 --sort rate --save /etc/pacman.d/mirrorlist
+                } && touch "$PACKAGE_MANAGER_MIRRORLIST_FILE_LOCK"
+                ;;
+        esac
+    fi
+}
+
+#MUST_BE_FIXED
+#MUST_BE_FIXED_PARTITION_DEVICE
+system_pkg_install_bootloader_grub(){
+    pacman -S --noconfirm grub
+
+    #???
+    #grub-install /dev/sda
+    
+    #Replace sda with your disk name, not the partition
+    #grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB        #UEFI
+    #grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB    #UEFI
+    #grub-install --target=i386-pc /dev/sda                                             #MBR
+
+
+    #Temporary break mode
+    while true; do
+        system_utils_continue_press_key_cancel
+        sleep 5
+    done
+
+
+
+    #   chroot "${DESTDIR}" "/usr/bin/grub-install" \
+    #        --directory="/usr/lib/grub/i386-pc" \
+    #        --target="i386-pc" \
+    #        --boot-directory="/boot" \
+    #        --recheck \
+    #        --debug \
+    #        "${bootdev}" &>"/tmp/grub_bios_install.log"
+
+
+    #    mkdir -p "${DESTDIR}/boot/grub/locale"
+    #	cp -f "${DESTDIR}/usr/share/locale/en@quot/LC_MESSAGES/grub.mo" "${DESTDIR}/boot/grub/locale/en.mo"
+
+    #	if [[ -e "${DESTDIR}/boot/grub/i386-pc/core.img" ]]; then
+    #		GRUB_PREFIX_DIR="boot/grub"
+    #		GRUB_BIOS="1"
+    #		#dogrub_config
+    #        swap_partition=$(swapon -s | grep dev -m1 | cut -d" " -f1)
+    #		dogrub_mkconfig
+    #		GRUB_BIOS=""
+    #		DIALOG --msgbox "GRUB(2) BIOS has been successfully installed." 0 0
+    #	else
+    #		DIALOG --msgbox "Error installing GRUB(2) BIOS.\nCheck /tmp/grub_bios_install.log for more info.\n\nYou probably need to install it manually by chrooting into ${DESTDIR}.\nDon't forget to bind /dev and /proc into ${DESTDIR} before chrooting." 0 0
+    #		return 1
+    #	fi
+        
+        #???
+    #    grub-mkconfig -o /boot/grub/grub.cfg
+
+
+
+
+
+        #Add modules to GRUB
+    #    "$EDITOR" /etc/mkinitcpio.conf
+            #MODULES=(btrfs)
+            #MODULES=(btrfs amdgpu)
+            #MODULES=(btrfs nvidia)
+
+        #Regenerate the init run file
+    #    mkinitcpio -p linux
+        #mkinitcpio -p linux-lts
+}
+
+#MUST_BE_FIXED
+#MUST_BE_FIXED_PARTITION_DEVICE
+#MUST_BE_IMPROVED
+system_pkg_install_bootloader_refind(){
+    #???
+    pacman -S --noconfirm efibootmgr refind-efi
+    
+    #???
+    refind-install --usedefault /dev/sda1 --alldrivers
+    mkrlconf
+
+    #???
+    ls /boot/
+
+    #???
+    "$EDITOR" /boot/refind_linux.conf
+        #"Boot with minimal options"	"ro root=/dev/sda2"
+
+    #???
+    ls /boot/EFI/
+    ls /boot/EFI/BOOT/
+
+    #???
+    "$EDITOR" /boot/EFI/BOOT/refind.conf
+        #menuentry "Arch Linux"{
+        #    options	"root=/dev/sda1 rw add_efi_memmap" #Edit this line
+        #}
+}
+
+#MUST_BE_FIXED
+system_pkg_install_bootloader_systemd(){
+    #???
+    pacman -S --noconfirm efibootmgr 
+
+    #???
+    bootctl --path=/boot install
+
+    #???
+    ls /boot/
+    ls /boot/loader/
+
+    #???
+    "$EDITOR" /boot/loader/loader.conf
+        #timeout 10
+        ##console-mode keep
+        #default arch-*
+
+    #???
+    ls /boot/loader/entries/
+
+    #???
+    "$EDITOR" /boot/loader/entries/arch.conf
+        #title	Arch Linux
+        #linux	/vmlinuz-linux
+        #initrd	/initramfs-linux.img
+        #options	root=/dev/sda2 rw
+}
+
+system_pkg_install_driver_audio(){
+    pacman -S --noconfirm alsa-utils pulseaudio
+}
+
+system_pkg_install_driver_battery(){
+    pacman -S --noconfirm tlp
+}
+
+system_pkg_install_driver_bluetooth(){
+    pacman -S --noconfirm bluez bluez-utils
+}
+
+system_pkg_install_driver_printer(){
+    pacman -S --noconfirm cups #hplip
+    #pacman -S --noconfirm cups hplip
+}
+
+system_pkg_install_driver_file(){
+    pacman -S --noconfirm dosfstools gvfs gvfs-smb mtools ntfs-3g rsync
+}
+
+system_pkg_install_driver_processor(){
+    #pacman -S --noconfirm amd-ucode
+    pacman -S --noconfirm intel-ucode
+}
+
+system_pkg_install_driver_video(){
+    #pacman -S xf86-video-amdgpu
+    #pacman -S nvidia nvidia-utils nvidia-settings
+    pacman -S --noconfirm xf86-video-intel
+    pacman -S --noconfirm xf86-video-qxl
+}
+
+system_pkg_install_software_binary_lf(){
+    if [[ ! -f /usr/local/bin/lf ]]; then
+        curl -L -O https://github.com/gokcehan/lf/releases/download/r27/lf-linux-amd64.tar.gz
+        tar -xvzf ./lf-linux-amd64.tar.gz
+        rm ./lf-linux-amd64.tar.gz
+        chmod +x ./lf
+        mv ./lf /usr/local/bin/
+    else
+        echo -e "LF - File Manager had already been installed"
+    fi
+}
+
+system_pkg_install_software_compilation(){
+    pacman -S --noconfirm base-devel linux-headers git
+}
+
+system_pkg_install_software_desktop_environment_gnome(){
+    #pacman -S --noconfirm xorg
+    pacman -S --noconfirm xdg-user-dirs xdg-utils gdm gnome
+    #pacman -S --noconfirm xdg-user-dirs xdg-utils gdm gnome gnome-extra
+
+    #Enable login manager tools on system init
+    systemctl enable --now gdm
+}
+
+system_pkg_install_software_disk_management(){
+    pacman -S --noconfirm parted gptfdisk
+}
+
+system_pkg_install_software_editor_text(){
+    #system_pkg_install_software_editor_text "vim"
+    local EDITOR_TEXT="$1"
+
+    #Install the terminal text editor
+    pacman -S --noconfirm "$EDITOR_TEXT"
+}
+
+system_pkg_install_software_structure_base(){
+    local PATH_MOUNT_POINT="$1" #/mnt/
+
+    #Install the basic Linux structure on root partition
+    pacstrap "$PATH_MOUNT_POINT" base linux linux-firmware
+    #pacstrap "$PATH_MOUNT_POINT" base linux-lts linux-lts-headers linux-firmware
+}
+
+system_pkg_install_software_manual_user(){
+    pacman -S --noconfirm man-db man-pages
+}
+
+system_pkg_install_software_network(){
+    pacman -S --noconfirm networkmanager network-manager-applet wireless_tools wpa_supplicant dialog dhcpcd openbsd-netcat inetutils dnsutils iwd
+
+    #Enable network tools on system init
+    systemctl enable --now dhcpcd
+    systemctl enable --now NetworkManager
+}
+
+system_pkg_install_software_ssh(){
+    pacman -S --noconfirm openssh
+
+    #Enable ssh tools on system init
+    systemctl enable --now sshd
+}
+
+system_pkg_install_software_terminal_multiplexer(){
+    pacman -S --noconfirm tmux
+}
+
+system_utils_access_previledges_root(){
+    #Enable sudo access to the users
+    EDITOR="$EDITOR" visudo #Uncomment the line: #%wheel ALL=(ALL) ALL
+    #echo "ermanno ALL=(ALL) ALL" >> /etc/suduers.d/ermanno
+}
+
+system_utils_battery_check_charge_level(){
+    #Check current battery charge level
+    local BATTERY_LEVEL
+    
+    BATTERY_LEVEL=$(cat /sys/class/power_supply/BAT0/capacity)
+
+    echo "Battery level: ${BATTERY_LEVEL}%"
+}
+
+system_utils_clock_hardware(){
+    #Syncronize operating system time using the hardware clock
+    hwclock --systohc
+}
+
+system_utils_clock_internet(){
+    #Syncronize the network protocol
+    timedatectl set-ntp true
+}
+
+system_utils_continue_press_key_any(){
+    read -n 1 -s -r -p "Press any key to continue"
+}
+
+system_utils_continue_press_key_cancel(){
+    printf "\e[1;32mPress CTRL+C to stop this script file.\e[0m\n"
+}
+
+system_utils_file_copy_safety(){
+    #system_utils_file_copy_safety "$0" "/mnt/usr/local/bin/"
+
+    local PATH_FILE_SCRIPT="$1"
+    local PATH_DIRECTORY_BACKUP="$2"
+
+    #Create absolute path if not exists
+    mkdir -p "$PATH_DIRECTORY_BACKUP"
+
+    #Copy file to the destiny folder directory
+    cp -f "$PATH_FILE_SCRIPT" "$PATH_DIRECTORY_BACKUP"
+
+    #Give executable permission
+    chmod +x "$PATH_DIRECTORY_BACKUP"
+
+    #Check if script file has been backed up successed
+    {
+        lf "$PATH_DIRECTORY_BACKUP"
+    } || {
+        echo "---###---"
+        ls -lah "$PATH_DIRECTORY_BACKUP"
+    }
+}
+
+system_utils_file_log_generate(){
+    #system_utils_file_log_generate "/var/log/my_log.log" "$?" "<command_description>"
+
+    local FILE_PATH="$1"
+    local STATUS_CODE="$2"
+    local MESSAGE_VALUE="$3"
+
+    case $STATUS_CODE in
+        0) echo -e "${STATUS_CODE}\t${MESSAGE_VALUE} step has been completed!" >> "$FILE_PATH" ;;
+        *) echo -e "${STATUS_CODE}\t${MESSAGE_VALUE} step has been failed!" >> "$FILE_PATH" ;;
+    esac
+
+    
+    #system_utils_continue_press_key_any
+}
+
+system_utils_file_remove(){
+    local PATH_FILE_LOG="$1"
+
+    if [[ -f "$PATH_FILE_LOG" ]]; then
+        rm "$PATH_FILE_LOG"
+    fi
+}
+
+system_utils_fstab_generate(){
+    #Generate file system table
+    genfstab -U /mnt/ >> /mnt/etc/fstab
+
+    #???
+    #less /mnt/etc/fstab
+}
+
+system_utils_internet_connection_test(){
+    ping -c 3 archlinux.org
+}
+
+system_utils_internet_ip_machine_host_address_global(){
+    #ip addr | grep "inet " | awk '{print $2}'
+    ip addr | grep "inet " | grep "scope global" | awk '{print $2}'
+}
+
+system_utils_internet_ip_machine_host_address_local(){
+    curl ifconfig.me
+}
+
+system_utils_language_set(){
+    #Edit the operating system default language
+    "$EDITOR" /etc/locale.gen #Uncomment the 'en_US.UTF-8 UTF-8' line
+
+    #???
+    #sed -i '177s/.//' /etc/locale.gen #Official
+    #sed -i '178s/.//' /etc/locale.gen #Video
+    
+    #???
+    locale-gen
+
+    #???
+    echo "LANG=en_US.UTF-8" >> /etc/locale.conf
+
+    #???
+    #echo "KEYMAP=de_CH-latin1" >> /etc/vconsole.conf
+}
+
+system_utils_layout_keyboard_load(){
+    #Load Brazilian keyboard layout map
+    loadkeys br-abnt2
+}
+
+system_utils_md5_value_random_many(){
+    #system_utils_md5_value_random_many "/home/henrikbeck95/shared/vagrant/aaaaa/aaa.log" "200"
+
+    local PATH_FILE="$1"
+    local GENERATE_QUANTITY_NUMBER="$2"
+
+    cat /dev/null > "$PATH_FILE"
+
+    for (( i=0; i < GENERATE_QUANTITY_NUMBER; i++ )); do
+        echo "$RANDOM" | md5sum | awk '{print $1}' >> "${PATH_FILE}.tmp"
+        
+        printf "\r%s" "$i / $GENERATE_QUANTITY_NUMBER..."
+    done
+
+    sort --random-sort --unique "${PATH_FILE}.tmp" > "$PATH_FILE"
+    
+    rm "${PATH_FILE}.tmp"
+}
+
+system_utils_perfil_account_create_user_name(){
+    local PERFIL_ACCOUNT_USER_NAME="$1"
+
+    #Create a new user and already adding him to the wheel group
+    useradd -mG wheel "$PERFIL_ACCOUNT_USER_NAME"
+}
+
+system_utils_perfil_account_create_user_password(){
+    local PERFIL_ACCOUNT_USER_NAME="$1"
+    local PERFIL_ACCOUNT_USER_PASSWORD="$2"
+
+    #Set a password to the User user
+    (echo "$PERFIL_ACCOUNT_USER_PASSWORD" ; echo "$PERFIL_ACCOUNT_USER_PASSWORD") | passwd "$PERFIL_ACCOUNT_USER_NAME"
+}
+
+system_utils_perfil_hostname_create(){
+    local PERFIL_HOST_NAME="$1"
+
+    #Create the operating system host name
+    echo "biomachine" >> /etc/hostname
+
+    #Create the localhost network map file
+    echo -e "127.0.0.1\tlocalhost\n::1\t\tlocalhost\n127.0.0.1\t$PERFIL_HOST_NAME.localdomain\t$PERFIL_HOST_NAME" > /etc/hosts
+}
+
+system_utils_timezone_set(){
+    local PLACE_TIMEZONE="$1"
+
+    ln -sf /usr/share/zoneinfo/"$PLACE_TIMEZONE" /etc/localtime
+}
+
+utils_check_if_internet_connection_exists(){
+    #echo "GET http://google.com HTTP/1.0\n\n" | nc google.com 80 > /dev/null 2>&1
+
+    #ping -q -c1 google.com &>/dev/null && echo online || echo offline
+    # && echo online || echo offline
+	#if [ $(nm-tool|grep State|cut -f2 -d' ') == "connected" ]; then
+    #if [ $? -eq 0 ]; then
+    #if [ "$('GET http://google.com HTTP/1.0\n\n' | nc google.com 80 > /dev/null 2>&1)" -eq 0 ]; then
+
+    #if [[ "$(ping -q -c1 archlinux.org &>/dev/null)" -eq 0 ]]; then
+    if [[ "$(curl -Is http://www.google.com | head -1 | grep 200 &>/dev/null)" -eq 0 ]]; then
+        echo "true"
+    else
+        echo "false"
+    fi
+}
+
+##############################
+#Functions
+##############################
+
+#MUST_BE_FIXED
+installation_setup_log_file_read(){
+    #for i in $GLOBAL_DECLARATION_PATH_FILE_LOG"*"; do
+        #less "$i"
+    #done
+
+    lf ./
+}
+
+installation_setup_part_00_normal(){
+    local PATH_FILE_LOG="${1}_step_part_00_normal.log"
+
+    #system_utils_file_remove "$PATH_FILE_LOG"
+
+	system_utils_layout_keyboard_load ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Set current keyboard layout"
+
+    while true; do
+        case $(utils_check_if_internet_connection_exists) in
+            "false")
+                system_driver_internet_wifi_iwctl_network_connect \
+                    "$GLOBAL_VALUE_INTERNET_WIFI_DRIVER" \
+                    "$GLOBAL_VALUE_INTERNET_WIFI_NAME" \
+                    "$GLOBAL_VALUE_INTERNET_WIFI_PASSWORD" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Connect to the internet"
+                
+                echo "No internet connection yet! :("
+
+                sleep 2
+                ;;
+            "true") 
+                echo "Connected to the internet! \o/"
+                break
+                ;;
+        esac
+    done
+
+    #system_utils_internet_connection_test ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Test the internet connecetion"
+    system_pkg_install_software_binary_lf ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install LF - File Manager"
+	system_utils_battery_check_charge_level ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Check the current battery level"
+}
+
+installation_setup_part_01_chroot(){
+    local PATH_FILE_LOG="${1}_step_part_01_chroot.log"
+
+    #system_utils_file_remove "$PATH_FILE_LOG"
+
+    system_utils_perfil_account_create_user_password \
+        "root" \
+        "$GLOBAL_VALUE_PERFIL_ACCOUNT_ROOT_PASSWORD" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Set a password to the User user"
+
+    pacman -S --noconfirm vim ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install Vim text editor" #Must be removed soon
+
+    system_utils_timezone_set "$GLOBAL_VALUE_PLACE_TIMEZONE" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Set current timezone"
+    system_utils_clock_hardware ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Enable hardware clock syncronization"
+    system_utils_language_set ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Set default operating system language"
+    system_utils_perfil_hostname_create "$GLOBAL_VALUE_PERFIL_HOST_NAME" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Create hostname"
+
+    system_pkg_update_database_mirrorlist "$GLOBAL_VALUE_PLACE_COUNTRY_NAME" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Update package manager mirrorlist database"
+    system_pkg_install_software_binary_lf ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install LF - File Manager"
+    system_pkg_install_software_disk_management ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install disk manager tools"
+    system_pkg_install_software_manual_user ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install user manual tools"
+    system_pkg_install_software_editor_text "$EDITOR" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install prefered text editor"
+    system_pkg_install_driver_processor ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install CPU processor drives"
+    system_pkg_install_software_terminal_multiplexer ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install terminal multiplexer"
+    system_pkg_install_software_compilation ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install development requirements for compiling softwares"
+    system_pkg_install_software_network ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install network tools"
+    system_pkg_install_driver_file ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install filesystem drivers"
+
+    #Utility to detect other OSes on a set of drives
+    pacman -S --noconfirm os-prober ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install OS-Prober software"
+
+    #system_pkg_install_bootloader_grub ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install bootloader"
+    #system_pkg_install_bootloader_refind ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install bootloader"
+    #system_pkg_install_bootloader_systemd ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install bootloader"
+
+    #Quit from chroot
+    printf "\e[1;32mDone! Type exit for leaving from the Arch-Chroot mode.\e[0m" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Quit from fake root mode"
+    #exit
+}
+
+#MUST_BE_FIXED
+#MUST_BE_FIXED_PARTITION_DEVICE
+installation_setup_part_01_normal(){
+    local PATH_FILE_LOG="${1}_step_part_01_normal.log"
+    local GLOBAL_VALUE_PARTITION_TABLE=""
+
+    #system_utils_file_remove "$PATH_FILE_LOG"
+    
+    #Create the partition according to the defined value
+    case "$GLOBAL_VALUE_PARTITION_TABLE" in
+        "gpt" | "GPT")
+            system_disk_table_create_gpt "$GLOBAL_VALUE_PARTITION_DEVICE" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Create disk partition table"
+            ;;
+        "mbr" | "MBR")
+            system_disk_table_create_mbr "$GLOBAL_VALUE_PARTITION_DEVICE" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Create disk partition table"
+            ;;
+        *) echo -e "Error!" ;;
+    esac
+
+    system_disk_partition_delete_all "$GLOBAL_VALUE_PARTITION_DEVICE" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Delete all partitions table"
+
+    system_disk_partition_create \
+        "$GLOBAL_VALUE_PARTITION_DEVICE" \
+        "$GLOBAL_VALUE_PARTITION_BOOT_NUMBER" \
+        "$GLOBAL_VALUE_PARTITION_BOOT_LABEL" \
+        "$GLOBAL_VALUE_PARTITION_BOOT_SIZE" \
+        "$GLOBAL_VALUE_PARTITION_TABLE" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Create the BOOT partition"
+
+    system_disk_partition_create \
+        "$GLOBAL_VALUE_PARTITION_DEVICE" \
+        "$GLOBAL_VALUE_PARTITION_ROOT_NUMBER" \
+        "$GLOBAL_VALUE_PARTITION_ROOT_LABEL" \
+        "$GLOBAL_VALUE_PARTITION_ROOT_SIZE" \
+        "$GLOBAL_VALUE_PARTITION_TABLE" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Create the ROOT partition"
+
+    system_disk_partition_create \
+        "$GLOBAL_VALUE_PARTITION_DEVICE" \
+        "$GLOBAL_VALUE_PARTITION_HOME_NUMBER" \
+        "$GLOBAL_VALUE_PARTITION_HOME_LABEL" \
+        "$GLOBAL_VALUE_PARTITION_HOME_SIZE" \
+        "$GLOBAL_VALUE_PARTITION_TABLE" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Create the HOME partition"
+
+    system_disk_partition_format \
+        "$GLOBAL_VALUE_PARTITION_BOOT_NUMBER" \
+        "$GLOBAL_VALUE_PARTITION_BOOT_FORMAT" \
+        "$GLOBAL_VALUE_PARTITION_BOOT_LABEL" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Format the BOOT partition"
+
+    system_disk_partition_format \
+        "$GLOBAL_VALUE_PARTITION_DEVICE" \
+        "$GLOBAL_VALUE_PARTITION_ROOT_NUMBER" \
+        "$GLOBAL_VALUE_PARTITION_ROOT_FORMAT" \
+        "$GLOBAL_VALUE_PARTITION_ROOT_LABEL" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Format the ROOT partition"
+
+    system_disk_partition_format \
+        "$GLOBAL_VALUE_PARTITION_DEVICE" \
+        "$GLOBAL_VALUE_PARTITION_HOME_NUMBER" \
+        "$GLOBAL_VALUE_PARTITION_HOME_FORMAT" \
+        "$GLOBAL_VALUE_PARTITION_HOME_LABEL" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Format the HOME partition"
+
+    system_disk_partition_management "$GLOBAL_VALUE_PARTITION_DEVICE" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Management the disk partition"
+    system_disk_partition_list ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "List the disk partition"
+
+    exit #Must be removed soon
+
+
+
+
+    #system_disk_partition_mount \
+        #"$GLOBAL_VALUE_PARTITION_DEVICE" \
+        #"$GLOBAL_VALUE_PARTITION_BOOT_NUMBER" \
+        #"$GLOBAL_VALUE_PARTITION_ROOT_NUMBER" \
+        #"$GLOBAL_VALUE_PARTITION_BOOT_FORMAT" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Mount disk partition ${GLOBAL_VALUE_PARTITION_DEVICE}${GLOBAL_VALUE_PARTITION_BOOT_NUMBER} ${GLOBAL_VALUE_PARTITION_DEVICE}${GLOBAL_VALUE_PARTITION_ROOT_NUMBER} ${GLOBAL_VALUE_PARTITION_DEVICE}${GLOBAL_VALUE_PARTITION_BOOT_FORMAT}"
+
+
+
+
+
+    system_utils_clock_internet ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Enable internet clock syncronization"
+
+    system_pkg_update_database_repository ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Syncronize package manager repository database"
+    system_pkg_update_database_mirrorlist "$GLOBAL_VALUE_PLACE_COUNTRY_NAME" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Update package manager mirrorlist database"
+    system_pkg_install_software_terminal_multiplexer ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install terminal multiplexer"
+    #tmux #Login into terminal screen multiplexer
+    #system_pkg_install_software_disk_management ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install disk manager tools"
+    #system_pkg_install_driver_file ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install filesystem drivers"
+
+
+
+
+
+    #mount /dev/sda1 /mnt/
+    #mount /dev/sda2 /mnt/boot/
+    system_pkg_install_software_structure_base "/mnt" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install the basic Linux structure on root partition"
+
+
+
+
+
+
+    system_utils_fstab_generate ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Generate file system table"
+
+    #Change root directory to the mounted point
+    #arch-chroot /mnt/
+        #installation_setup_part_01_chroot
+    #arch-chroot /mnt/ bash -c 'pacman -Sy grub ; grub-install /dev/sda ; grub-#mkconfig -o /boot/grub/grub.cfg' ; reboot
+    #arch-chroot /mnt/ bash -c installation_setup_part_01_chroot #MUST_BE_FIXED
+    arch-chroot /mnt/ bash -c 'function_aux installation_setup_part_01_chroot' ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Change root directory to the mounted point" #TESTING
+    #arch-chroot /mnt/ bash -c 'function_aux installation_setup_part_02_normal' ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Change root directory to the mounted point" #TESTING
+    #arch-chroot /mnt/ bash -c 'function_aux installation_setup_part_03_normal' ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Change root directory to the mounted point" #TESTING
+
+    #system_disk_partition_umount_all
+    system_disk_partition_umount_path "/mnt/" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Unmount disk partition /mnt/"
+
+    #Restart the machine
+    printf "\e[1;32mDone! Type reboot.\e[0m"
+    #reboot
+}
+
+installation_setup_part_02_normal(){
+    local PATH_FILE_LOG="${1}_step_part_02_normal.log"
+
+    #system_utils_file_remove "$PATH_FILE_LOG"
+
+    system_utils_perfil_account_create_user_name "$GLOBAL_VALUE_PERFIL_ACCOUNT_USER_NAME" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Create a new user and already adding him to the wheel group"
+
+    system_utils_perfil_account_create_user_password \
+        "$GLOBAL_VALUE_PERFIL_ACCOUNT_USER_NAME" \
+        "$GLOBAL_VALUE_PERFIL_ACCOUNT_USER_PASSWORD" ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Set a password to the User user"
+
+    system_utils_access_previledges_root ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Enable sudo access to the users"
+    #system_utils_internet_ip_machine_host_address_local ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Check the machine ip address from localhost"
+    system_pkg_install_software_ssh ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install SSH tools"
+    system_pkg_install_driver_audio ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install audio drivers"
+    system_pkg_install_driver_battery ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install battery drivers"
+    system_pkg_install_driver_bluetooth ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install bluetooth drivers"
+    system_pkg_install_driver_printer ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install printer drivers"
+    system_pkg_install_driver_video ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install graphics video drivers"
+
+    #Restart the machine
+    printf "\e[1;32mDone! Type exit, umount -a and reboot.\e[0m"
+    #reboot
+}
+
+installation_setup_part_03_normal(){
+    local PATH_FILE_LOG="${1}_step_part03_normal.log"
+
+    #system_utils_file_remove "$PATH_FILE_LOG"
+
+    #- [ ] Graphical interface (Gnome)
+    #- [ ] Package manager (Flatpak, Homebrew, Paru)
+
+    system_pkg_install_software_desktop_environment_gnome ; system_utils_file_log_generate "$PATH_FILE_LOG" "$?" "Install desktop environment"
+}
+
+testing(){
+    #ls /sys/firmware/efi/var/
+    #df -hT
+    #grub-install
+    #/dev/sda1 | vfat | /boot/efi
+    #/boot/efi/EFI/BOOT/BOOTX64.EFI
+
+    #Device      Start       End         Sectors Type
+    #/dev/sda1   2048        2048        1M      BIOS boot
+    #/dev/sda2   104447      100352      49M     EFI System
+    #/dev/sda3   41943006    31838559    20G     Linux filesystem
+
+    #Create GPT table /dev/sda with GPT
+    ( echo "g"; echo "w" ) | sudo fdisk /dev/sdb
+
+    ##############################
+
+    #Create the partition /dev/sda1 with 1 MB size
+    ( echo "n"; echo "1"; echo "2048"; echo "+1M"; echo "w" ) | sudo fdisk /dev/sdb && sudo cfdisk /dev/sdb
+
+    #Create the partition /dev/sdb2 with ??? MB size
+    ( echo "n"; echo "2"; echo "4096"; echo "104447"; echo "w" ) | sudo fdisk /dev/sdb && sudo cfdisk /dev/sdb      #1050623
+
+    #Create the partition /dev/sdb3 20 GB size #31943006 = 15.3 GB
+    ( echo "n"; echo "3"; echo "104448"; echo "41943006"; echo "w" ) | sudo fdisk /dev/sdb && sudo cfdisk /dev/sdb  #105908223
+
+    #Create the partition /dev/sdb4 ??? GB size #Rest
+    ( echo "n"; echo "4"; echo "41943007"; echo -ne '\n'; echo "w" ) | sudo fdisk /dev/sdb && sudo cfdisk /dev/sdb  #976773134
+
+    ##############################
+
+    #Change the partition /dev/sdb1 type to BIOS boot (option 4)
+        ( echo "t"; echo "1"; echo "4"; echo "w" ) | sudo fdisk /dev/sdb && sudo cfdisk /dev/sdb
+
+    #Change the partition /dev/sdb2 type to EFI System (option 1)
+    ( echo "t"; echo "2"; echo "1"; echo "w" ) | sudo fdisk /dev/sdb && sudo cfdisk /dev/sdb
+
+    #Change the partition /dev/sdb3 type to Linux filesystem (option 20)
+    ( echo "t"; echo "3"; echo "20"; echo "w" ) | sudo fdisk /dev/sdb && sudo cfdisk /dev/sdb
+
+    #Change the partition /dev/sdb4 type to Linux swap (option 19)
+    ( echo "t"; echo "4"; echo "19"; echo "w" ) | sudo fdisk /dev/sdb && sudo cfdisk /dev/sdb
+
+    ##############################
+
+    #Format the partition /dev/sdb1 to vFAT
+    #sudo mkfs.fat -F32 -I -n 'BOOT_BIOS' /dev/sdb1 && sudo cfdisk /dev/sdb
+    #sudo mkfs.vfat -F32 -I -n 'BOOT_BIOS' /dev/sdb1 && sudo cfdisk /dev/sdb
+        sudo mkfs.vfat -I -n 'BOOT_BIOS' /dev/sdb1 && sudo cfdisk /dev/sdb
+
+    #Format the partition /dev/sdb2 to vFAT
+    #sudo mkfs.fat -F32 -I -n 'BOOT_BIOS' /dev/sdb2 && sudo cfdisk /dev/sdb
+    #sudo mkfs.vfat -F32 -I -n 'BOOT_EFI' /dev/sdb2 && sudo cfdisk /dev/sdb
+        sudo mkfs.vfat -I -n 'BOOT_EFI' /dev/sdb2 && sudo cfdisk /dev/sdb
+
+    #mfks.vfat /dev/sdb2 && sudo cfdisk /dev/sdb
+
+    ##############################
+
+    #Set the legacy_boot flag on partition 1.
+        ( echo "set 1 legacy_boot on" ) | sudo parted /dev/sdb
+
+    #Set the ‘boot’ flag on partition 2.
+    ( echo "set 2 boot on" ) | sudo parted /dev/sdb
+
+    #Set the ‘root’ flag on partition 3.
+    #( echo "set 3 root on" ) | sudo parted /dev/sdb
+
+    #Set the ‘swap’ flag on partition 4.
+    ( echo "set 4 swap on" ) | sudo parted /dev/sdb
+
+    #bios_grub
+    #swap
+    #esp
+
+    #root
+
+    ##############################
+
+    #sudo fdisk -l
+    #sudo parted -ls
+}
+
+installation_setup_update_file_script(){
+    #Backup the old version script file
+    #if [[ -f /bin/"$GLOBAL_DECLARATION_INFO_TOOL" ]]; then
+        #mv /bin/"$GLOBAL_DECLARATION_INFO_TOOL"
+    #fi
+    
+    #Download the newest version script file and replace the oldest one
+    echo "Updating the $GLOBAL_DECLARATION_INFO_TOOL tool..."
+    curl "$GLOBAL_DECLARATION_INFO_URL_SCRIPT" > /bin/"$GLOBAL_DECLARATION_INFO_TOOL"
+}
+
+installation_setup_update_file_settings(){
+    #Backup the old settings script file
+    #if [[ -f /etc/"$GLOBAL_DECLARATION_INFO_TOOL" ]]; then
+        #mv /bin/"$GLOBAL_DECLARATION_INFO_TOOL"
+    #fi
+    
+    #Download the newest version settings file and replace the oldest one
+    echo "Updating the $GLOBAL_DECLARATION_INFO_TOOL settings..."
+    curl "$GLOBAL_DECLARATION_INFO_URL_SETTINGS" > /etc/"$GLOBAL_DECLARATION_INFO_TOOL"
+}
+
+##############################
+#Export the functions
+##############################
+
+export -f function_aux
+export -f system_disk_partition_format
+#system_pkg_install_backup_export -f ???
+#export -f system_pkg_install_backup_snapper
+#export -f system_pkg_install_backup_timeshift
+export -f system_disk_partition_create
+export -f system_disk_partition_delete_all
+export -f system_disk_partition_delete_single
+export -f system_disk_partition_list
+export -f system_disk_partition_management
+export -f system_disk_partition_mount
+export -f system_disk_partition_umount_all
+export -f system_disk_partition_umount_path
+#export -f system_disk_table_convert_from_gpt_to_mbr
+export -f system_disk_table_convert_from_mbr_to_gpt
+export -f system_disk_table_create_gpt
+export -f system_disk_table_create_mbr
+export -f system_disk_table_list
+export -f system_driver_internet_wifi_iwctl_block_remove
+export -f system_driver_internet_wifi_iwctl_device_list
+#export -f system_driver_internet_wifi_iwctl_device_powered_off
+export -f system_driver_internet_wifi_iwctl_device_powered_on
+export -f system_driver_internet_wifi_iwctl_network_connect
+export -f system_driver_internet_wifi_iwctl_network_list_available
+export -f system_driver_internet_wifi_iwctl_network_list_known
+export -f system_driver_internet_wifi_iwctl_network_remove_know
+export -f system_driver_internet_wifi_iwctl_network_scan
+export -f system_driver_internet_wifi_iwctl_station_list
+export -f system_pkg_update_database_repository
+export -f system_pkg_update_database_mirrorlist
+export -f system_pkg_install_bootloader_grub
+export -f system_pkg_install_bootloader_refind
+export -f system_pkg_install_bootloader_systemd
+export -f system_pkg_install_driver_audio
+export -f system_pkg_install_driver_battery
+export -f system_pkg_install_driver_bluetooth
+export -f system_pkg_install_driver_printer
+export -f system_pkg_install_driver_file
+export -f system_pkg_install_driver_processor
+export -f system_pkg_install_driver_video
+export -f system_pkg_install_software_binary_lf
+export -f system_pkg_install_software_compilation
+export -f system_pkg_install_software_desktop_environment_gnome
+export -f system_pkg_install_software_disk_management
+export -f system_pkg_install_software_editor_text
+export -f system_pkg_install_software_structure_base
+export -f system_pkg_install_software_manual_user
+export -f system_pkg_install_software_network
+export -f system_pkg_install_software_ssh
+export -f system_pkg_install_software_terminal_multiplexer
+export -f system_utils_access_previledges_root
+export -f system_utils_battery_check_charge_level
+export -f system_utils_clock_hardware
+export -f system_utils_clock_internet
+export -f system_utils_continue_press_key_any
+export -f system_utils_file_copy_safety
+export -f system_utils_file_log_generate
+export -f system_utils_file_remove
+export -f system_utils_fstab_generate
+export -f system_utils_internet_connection_test
+export -f system_utils_internet_ip_machine_host_address_global
+export -f system_utils_internet_ip_machine_host_address_local
+export -f system_utils_language_set
+export -f system_utils_layout_keyboard_load
+export -f system_utils_md5_value_random_many
+export -f system_utils_perfil_account_create_user_name
+export -f system_utils_perfil_account_create_user_password
+export -f system_utils_perfil_hostname_create
+export -f system_utils_timezone_set
+export -f utils_check_if_internet_connection_exists
+
+export -f installation_setup_log_file_read
+export -f installation_setup_part_00_normal
+export -f installation_setup_part_01_chroot
+export -f installation_setup_part_01_normal
+export -f installation_setup_part_02_normal
+export -f installation_setup_part_03_normal
+export -f installation_setup_update_file_script
+export -f installation_setup_update_file_settings
+export -f testing
+
+##############################
+#Tests - success
+##############################
+
+#Fake root
+#arch-chroot /mnt/ bash -c 'function_aux system_pkg_install_software_binary_lf'
+
+#Functions
+#utils_check_if_internet_connection_exists
+
+##############################
+#Calling the functions
+##############################
+
+#Check if user has ROOT previledges
+if [[ "$UID" -ne 0 ]]; then
+	echo "Must has ROOT previledges to procedure!"
+	exit 1
+fi
+
+#Call the function according to the command line interface (CLI) arguments
+case "$GLOBAL_VALUE_AUX_01" in
+    "" | "-h" | "--help" | "-?") echo -e "$GLOBAL_DECLARATION_MESSAGE_HELP" ;;
+    "-e" | "--edit") "$EDITOR" "$GLOBAL_VALUE_AUX_00" ;;
+    "-p00n" | "--archlinux-part-00-normal") installation_setup_part_00_normal "$GLOBAL_DECLARATION_PATH_FILE_LOG" ;;
+    "-p01c" | "--archlinux-part-01-chroot") installation_setup_part_01_chroot "$GLOBAL_DECLARATION_PATH_FILE_LOG" ;;
+    "-p01n" | "--archlinux-part-01-normal") installation_setup_part_01_normal "$GLOBAL_DECLARATION_PATH_FILE_LOG" ;;
+    "-p02n" | "--archlinux-part-02-normal") installation_setup_part_02_normal "$GLOBAL_DECLARATION_PATH_FILE_LOG" ;;
+    "-p03n" | "--archlinux-part-03-normal") installation_setup_part_03_normal "$GLOBAL_DECLARATION_PATH_FILE_LOG" ;;
+    "--backup-script")
+        system_utils_file_copy_safety "$GLOBAL_VALUE_AUX_00" "$GLOBAL_VALUE_PATH_DIRECTORY_BACKUP_FILE_01"
+        system_utils_file_copy_safety "$GLOBAL_VALUE_AUX_00" "$GLOBAL_VALUE_PATH_DIRECTORY_BACKUP_FILE_02"
+        system_utils_file_copy_safety "$GLOBAL_VALUE_AUX_00" "$GLOBAL_VALUE_PATH_DIRECTORY_BACKUP_FILE_03"
+        ;;
+    "--logs") installation_setup_log_file_read ;;
+    "--test") testing ;;
+    "--update-script" ) installation_setup_update_file_script ;;
+    "--update-settings" ) installation_setup_update_file_settings ;;
+    #"-" | "--") : ;;
+    *) echo -e "$GLOBAL_DECLARATION_MESSAGE_ERROR" ;;
+esac
